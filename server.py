@@ -3,6 +3,7 @@ import logging
 import os
 from asyncio import Event, sleep
 from random import randint
+import types
 from typing import Optional
 
 from tornado.web import Application, RequestHandler, authenticated
@@ -233,15 +234,65 @@ class User(graphene.ObjectType):
     name = graphene.String()
 
 
+class Message(graphene.ObjectType):
+    id = graphene.Int()
+    to = graphene.Int()
+    from_ = graphene.Int(name='from')
+    text = graphene.String()
+    delivered = graphene.Boolean()
+
+
+class Messages(graphene.ObjectType):
+    count = graphene.Int()
+    items = graphene.List(Message)
+
+
+class CreateMessage(graphene.Mutation):
+    class Arguments:
+        pin = graphene.String()
+        text = graphene.String()
+        user_id = graphene.Int()
+
+    delivered = graphene.Boolean()
+
+    async def mutate(root, info, pin, text, user_id):
+        state = GLOBAL_STATE[0]
+        user_from = state.get_user_by_pin(pin)
+        user_to = state.get_user_by_id(int(user_id))
+        if not user_to:
+            raise ValueError('User not exists')
+
+        message = state.add_message(user_from, user_to, text)
+        delivered = await _send_message(message, user_to['endpoint'])
+        state.set_message_delivered(message['id'], delivered)
+        state.dump()
+        return {'delivered': bool(delivered)}
+
+
+class Mutations(graphene.ObjectType):
+    create_message = CreateMessage.Field()
+
+
 class Query(graphene.ObjectType):
     users = graphene.List(User)
+    messages = graphene.Field(Messages, pin=graphene.String(required=True))
 
     def resolve_users(root, info):
         return GLOBAL_STATE[0].get_users()
 
+    def resolve_messages(root, info, pin):
+        user = GLOBAL_STATE[0].get_user_by_pin(pin)
+        if user:
+            messages = GLOBAL_STATE[0].get_messages(user)
+            return {'count': len(messages), 'items': messages}
+        else:
+            raise ValueError('User not exists')
+
+
 
 my_schema = graphene.Schema(
-    query=Query
+    query=Query,
+    mutation=Mutations
 )
 
 if __name__ == '__main__':
