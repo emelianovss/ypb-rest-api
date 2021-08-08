@@ -9,6 +9,10 @@ from tornado.web import Application, RequestHandler, authenticated
 from tornado.httpclient import AsyncHTTPClient
 from tornado.ioloop import IOLoop
 
+import graphene
+from graphene_tornado.tornado_graphql_handler import TornadoGraphQLHandler
+
+
 FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(level=logging.DEBUG, format=FORMAT)
 logger = logging.getLogger(__name__)
@@ -24,7 +28,7 @@ ONLINE_MAP = {
     'true': True,
     'false': False
 }
-
+GLOBAL_STATE = []
 
 class PinGenerator:
     def __init__(self, items: Optional[list] = None):
@@ -146,7 +150,6 @@ class BaseHandler(RequestHandler):
 class UsersHandler(BaseHandler):
     async def get(self):
         online = ONLINE_MAP.get(self.get_query_argument('online', None))
-        users = self.state.get_users(online)
         await self.finish({
             'count': len(users),
             'items': [{'id': u['id'], 'online': u['online'], 'name': u['name']} for u in users]
@@ -224,12 +227,33 @@ async def check_endpoint(state: State, event: Event):
         await sleep(5)
 
 
+class User(graphene.ObjectType):
+    id = graphene.Int()
+    online = graphene.Boolean()
+    name = graphene.String()
+
+
+class Query(graphene.ObjectType):
+    users = graphene.List(User)
+
+    def resolve_users(root, info):
+        return GLOBAL_STATE[0].get_users()
+
+
+my_schema = graphene.Schema(
+    query=Query
+)
+
 if __name__ == '__main__':
     current_state = State.load()
+    GLOBAL_STATE.append(current_state)
     app = Application([
         (r'/api/v1/users', UsersHandler),
         (r'/api/v1/messages', MessagesHandler),
         (r'/api/v1/messages/user/(\d+)', CreateMessageHandler),
+        (r'/graphql', TornadoGraphQLHandler, dict(graphiql=True, schema=my_schema)),
+        (r'/graphql/batch', TornadoGraphQLHandler, dict(graphiql=True, schema=my_schema, batch=True)),
+        (r'/graphql/graphiql', TornadoGraphQLHandler, dict(graphiql=True, schema=my_schema))
     ], debug=True, state=current_state)
     check_event = Event()
     loop = IOLoop.current()
