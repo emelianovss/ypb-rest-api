@@ -151,6 +151,7 @@ class BaseHandler(RequestHandler):
 class UsersHandler(BaseHandler):
     async def get(self):
         online = ONLINE_MAP.get(self.get_query_argument('online', None))
+        users = self.state.get_users(online)
         await self.finish({
             'count': len(users),
             'items': [{'id': u['id'], 'online': u['online'], 'name': u['name']} for u in users]
